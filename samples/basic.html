@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+	<head>
+		<title>MiniWS Basic Sample</title>
+		<script type="text/javascript">
+
+		function write(msg){
+			document.getElementById('msgbox').innerHTML += msg + '<br>'; // Never do this in real code!
+		}
+
+		function onload()
+		{
+			s = window.WebSocket||window.MozWebSocket;
+			if (!s)
+			{
+				alert('Your browser does not support WebSockets :(');
+				return;
+			}
+
+			var resource = 'ws://localhost:8080/basic';
+
+			sock = new s(resource);
+			sock.onopen = function()
+			{
+				write('Connection opened!');
+
+				sock.send('Hello server, this is client');
+			}
+			sock.onclose = function()
+			{
+				write('Connection closed!');
+			}
+			sock.onmessage = function(msg)
+			{
+				write('Server replied: '+ msg.data)
+			}
+
+			write('Connecting to '+resource+' ...');
+			
+		}
+		
+		</script>
+	</head>
+	<body onload="onload()">
+		<div id="msgbox"></div>
+	</body>
+</html>

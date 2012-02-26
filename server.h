@@ -1,136 +1,106 @@
 #ifndef SERVER_H_INCLUDED_
 #define SERVER_H_INCLUDED_
 
+#include <boost/asio.hpp>
+#include <boost/make_shared.hpp>
+#include <boost/thread/recursive_mutex.hpp>
+#include <boost/shared_ptr.hpp>
+#include <boost/enable_shared_from_this.hpp>
+#include <set>
+#include <map>
+#include <string>
+#include <deque>
+
 namespace WS
 {
-
 using boost::asio::ip::tcp;
-
+	
 typedef boost::asio::buffers_iterator<boost::asio::streambuf::const_buffers_type> buffer_iterator;
-class BasicConnection;
+typedef boost::shared_ptr< std::vector<char> > MessagePtr;
 
-struct Frame
+struct Frame;
+class Connection;
+class Session;
+class Server;
+
+typedef boost::shared_ptr<Connection> ConnectionPtr;
+
+struct BaseFactory
 {
-	bool fin;
-	bool rsv1;
-	bool rsv2;
-	bool rsv3;
-	uint8_t opcode; // 4-bits
-	bool have_mask;
-	uint64_t payload_length;
-	uint8_t masking_key[4];
-	vector<uint8_t> payload_data;
-	
-	bool is_control_frame() { return opcode & 0x8; }
-	
-	void print();
-	
-	// Return amount of bytes consumed or 0 on failure
-	uint64_t parse(buffer_iterator begin, buffer_iterator end);
-	
-	// Write frame and return it
-	shared_ptr<vector<char> > write();
+	virtual Session* make_session() = 0;
+};
+template <class T>
+struct SessionFactory : public BaseFactory
+{
+	virtual T* make_session() {
+		return new T;
+	}
 };
 
-class BasicServer : public boost::noncopyable
+class Session
 {
-	public:
-	// just provides an interface
-	virtual void prune(shared_ptr<BasicConnection>) = 0;
+	friend class Connection;
+private:
+	boost::weak_ptr<Connection> m_connection;
+protected:
+public:
+	void send(const std::string& m);
+
+	virtual void on_message(const std::string& m) = 0;
 };
 
-template <class Con>
-class Server : public BasicServer
+class Server : public boost::noncopyable
 {
 	private:
 	
 	tcp::acceptor acceptor_;
+
+	boost::recursive_mutex m_connections_mutex;
+	std::set<ConnectionPtr> m_connections;
+	std::map<std::string, boost::shared_ptr<BaseFactory> > m_factories;
+	
+	void stop_listen();
+	void start_listen();
+
+	void handle_accept(ConnectionPtr new_connection,
+		const boost::system::error_code& error);
 	
 	protected:
-	std::set<shared_ptr<Con> > m_connections;
-	
-	// A mutex to restrict access to the m_connections set
-	boost::recursive_mutex m_connections_mutex;
-	
-	void stop_listen()
-	{
-		acceptor_.close();
-	}
 
 	public:
 
-	Server(boost::asio::io_service& io_service, int port)
-		: acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
-	{
-		start_accept();
-	}
-	virtual ~Server(){}
-	
-	void prune(shared_ptr<BasicConnection> con)
-	{
-		// Remove given connection from connections array
-		boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
-		
-		shared_ptr<Con> foo = boost::static_pointer_cast<Con>(con);
-		
-    typename std::set<shared_ptr<Con> >::iterator iter = m_connections.find(foo);
-		if(iter == m_connections.end())
-			return;
-		
-		m_connections.erase(iter);
-		log() << "Client disconnected, clients left: " << m_connections.size() << endl;
-	}
-	
-	void get_peers(std::set<shared_ptr<Con> > & in)
-	{
-		boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
-		in = m_connections;
-	}
+	void prune(ConnectionPtr);
+	Server(boost::asio::io_service& io_service, int port);
 
-	private:
-	void start_accept()
-	{
-		shared_ptr<Con> new_connection = 
-			make_shared<Con>(boost::ref(acceptor_.get_io_service()), this);
-		
-		acceptor_.async_accept(new_connection->socket(),
-		boost::bind(&Server::handle_accept, this, new_connection,
-			boost::asio::placeholders::error));
-	}
+	void get_peers(const std::string& resource, std::set<boost::shared_ptr<Session> >& out);
+	boost::shared_ptr<BaseFactory> get_factory(const std::string& resource);
 
-	void handle_accept(shared_ptr<Con> new_connection,
-		const boost::system::error_code& error)
+	template <class T>
+	void handle_resource(const std::string res)
 	{
-		if (!error)
-		{
-			new_connection->initialize();		
-			
-			boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);	
-			m_connections.insert(new_connection);
-			log() << "Client connected, clients now: " << m_connections.size() << endl;
-		}
-		start_accept();
+		m_factories[res] = boost::make_shared<SessionFactory<T> >();
 	}
 };
-	
-class BasicConnection
-	: public boost::enable_shared_from_this<BasicConnection>
+
+
+class Connection
+	: public boost::enable_shared_from_this<Connection>
 {
+	friend class Server;
 private:
 	tcp::socket socket_;
 	boost::asio::io_service::strand strand_;
 	boost::asio::streambuf buffer_;
 	boost::asio::streambuf fragment_; // fragmented pieces written here
-	
-	
-	map<string, string> m_headers;
-	string m_method;
-	string m_resource;
-	string m_http_version;
+
+	std::map<std::string, std::string> m_headers;
+	std::string m_method;
+	std::string m_resource;
+	std::string m_http_version;
 	bool m_parsing_headers;
 	bool m_active;
-	
-	BasicServer * m_owner;
+
+	Server * m_owner; // NO OWNERSHIP! The server always outlives 
 
 	uint64_t m_bytes_sent;
 	uint64_t m_bytes_received;
@@ -141,25 +111,25 @@ private:
 		PROTOCOL_INDETERMINATE
 	} m_protocol_version;
 	
-	deque<shared_ptr<vector<char> > > m_outbox;
+	std::deque< MessagePtr > m_outbox;
 		
 	void handle_write(const boost::system::error_code& /*error*/,
-	  size_t /*bytes_transferred*/,
-	  shared_ptr<vector<char> > /*buffer keepalive handle*/);
+		size_t /*bytes_transferred*/,
+		MessagePtr /*buffer keepalive handle*/);
 	void handle_read(const boost::system::error_code& error, size_t bytes_transferred);
 	
 	void async_read();
 	
 	bool validate_headers();
 	void send_handshake();
-	void parse_header(const string& line);
+	void parse_header(const std::string& line);
 	void process(Frame& f); 
 	
 	// strand'ed, thread safe call:
 	void close_impl();
 	
 	// outbox-related function calls
-	void write_impl(shared_ptr<vector<char> > );
+	void write_impl(MessagePtr);
 	void write_socket_impl();
 	
 	struct
@@ -167,64 +137,45 @@ private:
 		uint8_t data;
 		boost::posix_time::ptime time;
 	} m_ping;
-protected:
-	BasicConnection(
-		boost::asio::io_service& io_service,
-		BasicServer* );
 
-	virtual void on_connect() = 0;
-	virtual void on_message(const string& message) = 0;
-	virtual bool on_validate_headers() = 0;
-	virtual void on_disconnect() = 0;
+	boost::shared_ptr<Session> m_session;
 	
+protected:
 	void ping();
 	
 public:
-
-	pair<buffer_iterator, bool> buffer_ready_condition(buffer_iterator begin, buffer_iterator end);
-
-	void initialize();
 	
-	bool have_header(const string& q) const;
-	string get_header(const string& q) const;
-	string get_method() const;
-	string get_resource() const;
-	string get_http_version() const;
+	Connection(
+		boost::asio::io_service& io_service,
+		Server* );
+	
+	std::pair<buffer_iterator, bool> buffer_ready_condition(buffer_iterator begin, buffer_iterator end);
+
+	bool have_header(const std::string& q) const;
+	std::string get_header(const std::string& q) const;
+	std::string get_method() const;
+	std::string get_resource() const;
+	std::string get_http_version() const;
 	tcp::socket& socket();	
 	void close();
 
+	boost::shared_ptr<Session> get_session() const;
+
 	// encapsulated data
-	void write_text(const string& message);
+	void write_text(const std::string& message);
 
 	// raw data	
-	void write_raw(const string& message);
-	void write_raw(shared_ptr<vector<char> > msg);
-		
-	virtual ~BasicConnection();
+	void write_raw(const std::string& message);
+	void write_raw(MessagePtr msg);
 	
-	template <class T> 
-	Server<T>* get_server() const
+	Server& get_server() const
 	{
-		return static_cast<Server<T>*>(m_owner); 
+		assert(m_owner);
+		return *m_owner;
 	}
 };
 
 };
-
-/* typedef decltype(
-			   boost::bind(&WS::BasicConnection::buffer_ready_condition,
-				         shared_ptr<WS::BasicConnection>(), _1, _2)
-				    ) koira;
-
-static_assert(sizeof(koira) == 1);
-
-namespace boost {
-	namespace asio {
-		template <> struct is_match_condition<
-    koira >
-		: public boost::true_type {};
-	}
-}*/
 
 
 #endif

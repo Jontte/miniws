@@ -1,10 +1,21 @@
 #include "server.h"
+#include "sha1.h"
+#include "base64.h"
+#include <boost/algorithm/string.hpp>
+#include <boost/bind.hpp>
 #include <ctime>
 #include <endian.h>
 
-namespace WS{
-
-namespace { // Static linkage
+namespace WS {
+	
+namespace
+{
+	std::ostream& log()
+	{
+		return std::cout;
+	}
+	
+	// Static linkage
 	union u64
 	{
 		uint64_t integer;
@@ -30,6 +41,30 @@ namespace { // Static linkage
 		return htobe64(in);
 	}
 }
+
+struct Frame
+{
+	bool fin;
+	bool rsv1;
+	bool rsv2;
+	bool rsv3;
+	uint8_t opcode; // 4-bits
+	bool have_mask;
+	uint64_t payload_length;
+	uint8_t masking_key[4];
+	std::vector<uint8_t> payload_data;
+	
+	bool is_control_frame() { return opcode & 0x8; }
+	
+	void print();
+	
+	// Return amount of bytes consumed or 0 on failure
+	uint64_t parse(buffer_iterator begin, buffer_iterator end);
+	
+	// Write frame and return it
+	MessagePtr write();
+};
+
 
 uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 {
@@ -113,9 +148,9 @@ uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 	
 	return counter;
 }
-shared_ptr<vector <char> > Frame::write()
+MessagePtr Frame::write()
 {
-	shared_ptr<vector <char> > msg = make_shared<vector <char> >();
+	MessagePtr msg = boost::make_shared<std::vector <char> >();
 	msg->reserve(200);
 	
 	unsigned char firstbyte = 0;
@@ -151,16 +186,6 @@ shared_ptr<vector <char> > Frame::write()
 	}
 	msg->insert(msg->end(), payload_data.begin(), payload_data.end());
 	return msg;
-	
-	/*
-	// let's see how it turned out
-	boost::asio::streambuf buf;
-	std::ostream in(&buf);
-	in.write(&(*msg)[0],msg->size());
-	Frame foo;
-	parse_frame(buffer_iterator::begin(buf.data()), buffer_iterator::end(buf.data()), foo);
-	std::cout << "What it actually is: " << std::endl;
-	foo.print();*/
 }
 void Frame::print()
 {
@@ -194,8 +219,88 @@ void Frame::print()
 	cout << "== END FRAME ==" << endl;
 }
 
+Server::Server(boost::asio::io_service& io_service, int port)
+	: acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
+{
+	start_listen();
+}
+void Server::stop_listen()
+{
+	acceptor_.close();
+}
+void Server::prune(ConnectionPtr con)
+{
+	// Remove given connection from connections array
+	boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
+	
+	std::set<ConnectionPtr >::iterator iter = m_connections.find(con);
+	
+	if(iter == m_connections.end())
+		return;
+	
+	m_connections.erase(iter);
+	log() << "Client disconnected, clients left: " << m_connections.size() << std::endl;
+}
 
-pair<buffer_iterator, bool> BasicConnection::buffer_ready_condition(buffer_iterator begin, buffer_iterator end)
+void Server::get_peers(const std::string& resource, std::set<boost::shared_ptr<Session> >& out)
+{
+	boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
+	out.clear();
+
+	std::set<ConnectionPtr >::iterator iter;
+	for(iter = m_connections.begin(); iter != m_connections.end(); iter++)
+	{
+		if((*iter)->get_resource() == resource && (*iter)->get_session())
+			out.insert((*iter)->get_session());
+	}
+}
+
+void Server::start_listen()
+{
+	ConnectionPtr new_connection =
+		boost::make_shared<Connection>(
+			boost::ref(acceptor_.get_io_service()), this);
+
+	acceptor_.async_accept(new_connection->socket(),
+		boost::bind(&Server::handle_accept, this, new_connection,
+			boost::asio::placeholders::error));
+}
+
+void Server::handle_accept(ConnectionPtr new_connection,
+					const boost::system::error_code& error)
+{
+	if (!error)
+	{
+		new_connection->async_read();
+
+		boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
+		m_connections.insert(new_connection);
+		log() << "Client connected, clients now: " << m_connections.size() << std::endl;
+	}
+	start_listen();
+}
+boost::shared_ptr<BaseFactory> Server::get_factory(const std::string& resource)
+{
+	std::map<std::string, boost::shared_ptr<BaseFactory> >::iterator iter = m_factories.find(resource);
+	if(iter == m_factories.end())
+		return boost::shared_ptr<BaseFactory>();
+	return iter->second;
+}
+void Session::send(const std::string& m)
+{
+	try
+	{
+		ConnectionPtr con(m_connection);
+		con->write_text(m);
+	}
+	catch(std::exception& e)
+	{
+		// session might be dead..
+		m_connection.reset();
+	}
+}
+
+std::pair<buffer_iterator, bool> Connection::buffer_ready_condition(buffer_iterator begin, buffer_iterator end)
 {
 	// If we're still reading headers, cut from the first newline
 	if(m_parsing_headers)
@@ -231,9 +336,9 @@ pair<buffer_iterator, bool> BasicConnection::buffer_ready_condition(buffer_itera
 	}
 }
 
-void BasicConnection::handle_write(const boost::system::error_code& error,
+void Connection::handle_write(const boost::system::error_code& error,
   size_t bytes_transferred,
-  shared_ptr<vector<char> > /*buffer keepalive handle*/)
+  MessagePtr msg /*buffer keepalive handle*/)
 {
 	m_outbox.pop_front();
 	if(error)
@@ -258,7 +363,7 @@ void BasicConnection::handle_write(const boost::system::error_code& error,
 		socket_.close();
 	}
 }
-void BasicConnection::handle_read(const boost::system::error_code& error, size_t bytes_transferred)
+void Connection::handle_read(const boost::system::error_code& error, size_t bytes_transferred)
 {
 	if(!error)
 	{
@@ -278,7 +383,7 @@ void BasicConnection::handle_read(const boost::system::error_code& error, size_t
 			// somethings not right
 			if(m_bytes_received > 4*1024)
 			{
-				log() << "Client dropped: Huge handshake" << endl;
+				log() << "Client dropped: Huge handshake" << std::endl;
 				close();
 				return;
 			}
@@ -305,7 +410,7 @@ void BasicConnection::handle_read(const boost::system::error_code& error, size_t
 	}
 }
 
-void BasicConnection::process(Frame& f)
+void Connection::process(Frame& f)
 {
 	// process recently received frame
 	
@@ -367,7 +472,7 @@ void BasicConnection::process(Frame& f)
 			if(f.fin)
 			{
 				// consume fragmented message
-				string s(
+				std::string s(
 					buffer_iterator::begin(fragment_.data()),
 					buffer_iterator::end(fragment_.data())
 				);
@@ -377,7 +482,8 @@ void BasicConnection::process(Frame& f)
 				
 				try
 				{
-					on_message(s);
+					if(m_session)
+						m_session->on_message(s);
 				}
 				catch(std::exception& e)
 				{
@@ -401,10 +507,11 @@ void BasicConnection::process(Frame& f)
 			}
 			else
 			{
-				string s(f.payload_data.begin(),f.payload_data.end());
+				std::string s(f.payload_data.begin(),f.payload_data.end());
 				try
 				{
-					on_message(s);
+					if(m_session)
+						m_session->on_message(s);
 				}
 				catch(std::exception& e)
 				{
@@ -419,14 +526,14 @@ void BasicConnection::process(Frame& f)
 	f.print();
 }
 
-void BasicConnection::async_read()
+void Connection::async_read()
 {
 	try
 	{
 		boost::asio::async_read_until(socket_, buffer_,
-			boost::bind(&BasicConnection::buffer_ready_condition, shared_from_this(), _1, _2),
+			boost::bind(&Connection::buffer_ready_condition, shared_from_this(), _1, _2),
 			strand_.wrap(
-				boost::bind(&BasicConnection::handle_read, 
+				boost::bind(&Connection::handle_read,
 				shared_from_this(),
 				boost::asio::placeholders::error,
 				boost::asio::placeholders::bytes_transferred)));
@@ -438,13 +545,13 @@ void BasicConnection::async_read()
 	}
 }
 
-bool BasicConnection::validate_headers()
+bool Connection::validate_headers()
 {
 	// return whether the received headers are good from the Websocket apis point of view
 	
 	if(get_resource().empty() || get_http_version().empty() || get_method().empty())
 		return false;
-	if(boost::to_lower_copy(get_header("Connection")).find("upgrade") == string::npos)
+	if(boost::to_lower_copy(get_header("Connection")).find("upgrade") == std::string::npos)
 		return false;
 	if(boost::to_lower_copy(get_header("Upgrade")) != "websocket")
 		return false;
@@ -453,8 +560,12 @@ bool BasicConnection::validate_headers()
 	if(	get_header("Sec-WebSocket-Origin").empty() &&
 		get_header("Origin").empty())
 		return false;
-		
-	string version = get_header("Sec-WebSocket-Version");
+	
+	// method must be GET
+	if(get_method() != "GET")
+		return false;
+
+	std::string version = get_header("Sec-WebSocket-Version");
 	if(version == "13")
 		m_protocol_version = PROTOCOL_HYBI_13;
 	else if(version == "8")
@@ -465,19 +576,19 @@ bool BasicConnection::validate_headers()
 	// Just a reminder.
 	if(m_protocol_version == PROTOCOL_INDETERMINATE) 
 		return false;
-	return on_validate_headers();
+	return true;
 }
-void BasicConnection::send_handshake()
+void Connection::send_handshake()
 {
 	// create and send handshake response
 	
-	string response = get_header("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+	std::string response = get_header("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 	
 	unsigned char hash[20];
 	sha1::calc(response.c_str(), response.length(), hash);
-	string accept = base64_encode(hash, 20);
+	std::string accept = base64_encode(hash, 20);
 	
-	string handshake;
+	std::string handshake;
 	handshake.reserve(300);
 	
 	handshake = 
@@ -489,7 +600,7 @@ void BasicConnection::send_handshake()
 	handshake += "\r\n\r\n";
 	write_raw(handshake);
 }
-void BasicConnection::parse_header(const string& line)
+void Connection::parse_header(const std::string& line)
 {
 	if(!m_parsing_headers) return;
 	// The first line contains method, resource and http version:
@@ -497,7 +608,7 @@ void BasicConnection::parse_header(const string& line)
 	{
 		size_t pos = line.find(' ');
 		size_t prev = pos;
-		if(pos == string::npos)
+		if(pos == std::string::npos)
 			return;
 		m_method = line.substr(0,pos);
 		pos = line.find(' ', pos+1);
@@ -513,13 +624,14 @@ void BasicConnection::parse_header(const string& line)
 	{
 		// done with headers?
 		m_parsing_headers = false;
-		// validate headers
-		if(!validate_headers())
+		boost::shared_ptr<BaseFactory> fact;
+		// validate headers, check whether to handle resource
+		if(!validate_headers() || !(fact = get_server().get_factory(m_resource)))
 		{
 			log() << "Client didn't get past validation phase" << std::endl;
 			log() << "Client headers: " << std::endl;
-			log() << "	" << get_method() << " " << get_resource() << " " << get_http_version() << endl;
-			map<string, string>::iterator iter = m_headers.begin();
+			log() << "	" << get_method() << " " << get_resource() << " " << get_http_version() << std::endl;
+			std::map<std::string, std::string>::iterator iter = m_headers.begin();
 			for(;iter != m_headers.end(); iter++)
 			{
 				log() << "	" << iter->first << ": " << iter->second << std::endl;
@@ -529,17 +641,26 @@ void BasicConnection::parse_header(const string& line)
 		}
 
 		send_handshake();
-		on_connect();
+
+		// Create session!
+		m_session.reset(fact->make_session());
+		if(!m_session)
+		{
+			log() << "Unable to create session!" << std::endl;
+			close();
+			return;
+		}
 		
+		m_session->m_connection = shared_from_this();
 		return;
 	}
 	
 	// find ':'
 	size_t pos = line.find(':');
-	if(pos == string::npos)
+	if(pos == std::string::npos)
 		return;
-	string name = line.substr(0,pos);
-	string value = line.substr(pos+1);
+	std::string name = line.substr(0,pos);
+	std::string value = line.substr(pos+1);
 	
 	// trim
 	boost::trim(name);
@@ -549,8 +670,8 @@ void BasicConnection::parse_header(const string& line)
 	m_headers[name] = value;
 };
 
-BasicConnection::BasicConnection(boost::asio::io_service& io_service,
-	BasicServer* owner)
+Connection::Connection(boost::asio::io_service& io_service,
+	Server* owner)
 	: socket_(io_service)
 	, strand_(io_service)
 	, m_parsing_headers(true)
@@ -562,7 +683,12 @@ BasicConnection::BasicConnection(boost::asio::io_service& io_service,
 {
 }
 
-void BasicConnection::ping()
+boost::shared_ptr<Session> Connection::get_session() const
+{
+	return m_session;
+}
+
+void Connection::ping()
 {	
 	uint8_t val = rand() % 256;
 	
@@ -577,7 +703,7 @@ void BasicConnection::ping()
 	f.payload_data.assign(1, val);
 	write_raw(f.write());
 }
-void BasicConnection::write_text(const string& message)
+void Connection::write_text(const std::string& message)
 {
 	// construct a Frame and send it.
 	Frame f;
@@ -588,20 +714,20 @@ void BasicConnection::write_text(const string& message)
 	f.payload_data.insert(f.payload_data.end(), message.begin(), message.end());
 	write_raw(f.write());
 }
-void BasicConnection::write_raw(const string& message)
+void Connection::write_raw(const std::string& message)
 {
-	shared_ptr<vector<char> > msg = make_shared<vector<char> > ();
+	MessagePtr msg = boost::make_shared<std::vector<char> > ();
 	msg->insert(msg->end(), message.begin(), message.end());
 	write_raw(msg);
 }
-void BasicConnection::write_raw(shared_ptr<vector<char> > msg)
+void Connection::write_raw(MessagePtr msg)
 {
 	//if(!socket_.is_open())return;
 	try
 	{
 		strand_.post(
 			boost::bind(
-				&BasicConnection::write_impl,
+				&Connection::write_impl,
 				shared_from_this(),
 				msg
 			)
@@ -609,11 +735,11 @@ void BasicConnection::write_raw(shared_ptr<vector<char> > msg)
 	}
 	catch(std::exception& e)
 	{
-		log() << "write_raw: " << e.what() << endl;
+		log() << "write_raw: " << e.what() << std::endl;
 		close();
 	}
 }
-void BasicConnection::write_impl(shared_ptr<vector<char> > msg)
+void Connection::write_impl(MessagePtr msg)
 {
 	//if(!socket_.is_open())return;
 	//	return;
@@ -625,17 +751,17 @@ void BasicConnection::write_impl(shared_ptr<vector<char> > msg)
 	}
 	write_socket_impl();
 }
-void BasicConnection::write_socket_impl()
+void Connection::write_socket_impl()
 {
 	try
 	{
-		const shared_ptr<vector<char> >& msg = m_outbox.front();
+		const MessagePtr& msg = m_outbox.front();
 		
 		boost::asio::async_write(
 			socket_, 
 			boost::asio::buffer(*msg),
 			strand_.wrap(
-				boost::bind(&BasicConnection::handle_write, 
+				boost::bind(&Connection::handle_write,
 				shared_from_this(),
 				boost::asio::placeholders::error,
 				boost::asio::placeholders::bytes_transferred,
@@ -645,62 +771,56 @@ void BasicConnection::write_socket_impl()
 	}
 	catch(std::exception& e)
 	{
-		log() << "write_socket_impl: " << e.what() << endl;
+		log() << "write_socket_impl: " << e.what() << std::endl;
 		close();
 	}
 }
 
-void BasicConnection::initialize()
-{
-	// called from server
-	async_read();
-}
-
-bool BasicConnection::have_header(const string& q) const
+bool Connection::have_header(const std::string& q) const
 {
 	return m_headers.find(q) != m_headers.end();
 }
-string BasicConnection::get_header(const string& q) const
+std::string Connection::get_header(const std::string& q) const
 {
-	map<string,string>::const_iterator iter = m_headers.find(q);
+	std::map<std::string,std::string>::const_iterator iter = m_headers.find(q);
 	if(iter != m_headers.end())
 		return iter->second;
 	return "";
 }
-string BasicConnection::get_method() const
+std::string Connection::get_method() const
 {
 	return m_method;
 }
-string BasicConnection::get_resource() const
+std::string Connection::get_resource() const
 {
 	return m_resource;
 }
-string BasicConnection::get_http_version() const
+std::string Connection::get_http_version() const
 {
 	return m_http_version;
 }
 
-tcp::socket& BasicConnection::socket()
+tcp::socket& Connection::socket()
 {
 	return socket_;
 }
 
-void BasicConnection::close()
+void Connection::close()
 {
 	if(m_active)
 	{
 		strand_.post(
-				boost::bind(&BasicConnection::close_impl, 
+				boost::bind(&Connection::close_impl,
 				shared_from_this())
 			);
 		m_owner -> prune(shared_from_this());
-		
-		on_disconnect();
+
+		m_session.reset();
 	}
 	m_active = false;
 }
 
-void BasicConnection::close_impl()
+void Connection::close_impl()
 {
 	// Called from within a strand!
 	boost::system::error_code e;
@@ -713,6 +833,5 @@ void BasicConnection::close_impl()
 	}
 }
 	
-BasicConnection::~BasicConnection(){
 }
-}
+
