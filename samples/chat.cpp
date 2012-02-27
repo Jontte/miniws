@@ -4,32 +4,36 @@
 
 using namespace std;
 
-class Session : public WS::Session
+class Session : public WS::SessionWrap<Session>
 {
 	void on_message(const string& msg)
 	{
 		// Send incoming msg to all peers..
 
-//		std::set<boost::shared_ptr<Session> > peers = get_peers<Session>();
-//		for(auto iter = peers.begin());iter != peers.end(); iter++)
-//		{
-//			iter->send(msg);
-//		}
+		std::vector<boost::shared_ptr<Session> > peers;
+		get_peers(peers);
+
+		for( std::vector<boost::shared_ptr<Session> >::iterator iter = peers.begin();
+			 iter != peers.end();
+			 iter++)
+		{
+			(*iter)->send(msg);
+		}
 	}
 };
 
 void ping_thread(WS::Server& server)
 {
-	// Send pointless messages to all clients every second
+	// Send pointless messages to all clients every ten seconds
 
 	while(true)
 	{
-		sleep(1);
+		sleep(10);
 
-		std::set<boost::shared_ptr<WS::Session> > peers;
+		std::vector<WS::SessionPtr> peers;
 		server.get_peers("/chat", peers);
 
-		for(std::set<boost::shared_ptr<WS::Session> >::iterator iter = peers.begin();iter != peers.end(); iter++)
+		for(std::vector<WS::SessionPtr>::iterator iter = peers.begin();iter != peers.end(); iter++)
 		{
 			(*iter)->send("kissa");
 		}

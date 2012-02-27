@@ -36,12 +36,18 @@
 			}
 
 			write('Connecting to '+resource+' ...');
-			
+
+			input = document.getElementById('input');
+			input.onchange = function(){
+				sock.send(input.value);
+				input.value = '';
+			}
 		}
 		
 		</script>
 	</head>
 	<body onload="onload()">
 		<div id="msgbox"></div>
+		<input type="text" id="input"/>
 	</body>
 </html>

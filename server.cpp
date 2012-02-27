@@ -242,7 +242,7 @@ void Server::prune(ConnectionPtr con)
 	log() << "Client disconnected, clients left: " << m_connections.size() << std::endl;
 }
 
-void Server::get_peers(const std::string& resource, std::set<boost::shared_ptr<Session> >& out)
+void Server::get_peers(const std::string& resource, std::vector<boost::shared_ptr<Session> >& out)
 {
 	boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
 	out.clear();
@@ -251,15 +251,13 @@ void Server::get_peers(const std::string& resource, std::set<boost::shared_ptr<S
 	for(iter = m_connections.begin(); iter != m_connections.end(); iter++)
 	{
 		if((*iter)->get_resource() == resource && (*iter)->get_session())
-			out.insert((*iter)->get_session());
+			out.push_back((*iter)->get_session());
 	}
 }
 
 void Server::start_listen()
 {
-	ConnectionPtr new_connection =
-		boost::make_shared<Connection>(
-			boost::ref(acceptor_.get_io_service()), this);
+	ConnectionPtr new_connection(new Connection(boost::ref(acceptor_.get_io_service()), this));
 
 	acceptor_.async_accept(new_connection->socket(),
 		boost::bind(&Server::handle_accept, this, new_connection,
@@ -299,6 +297,19 @@ void Session::send(const std::string& m)
 		m_connection.reset();
 	}
 }
+void Session::get_peers(std::vector<SessionPtr>& out)
+{
+	try
+	{
+		ConnectionPtr con(m_connection);
+		con->get_server().get_peers(con->get_resource(), out);
+	}
+	catch(std::exception& e)
+	{
+	m_connection.reset();
+	}
+}
+
 
 std::pair<buffer_iterator, bool> Connection::buffer_ready_condition(buffer_iterator begin, buffer_iterator end)
 {
@@ -643,7 +654,7 @@ void Connection::parse_header(const std::string& line)
 		send_handshake();
 
 		// Create session!
-		m_session.reset(fact->make_session());
+		m_session = fact->make_session();
 		if(!m_session)
 		{
 			log() << "Unable to create session!" << std::endl;

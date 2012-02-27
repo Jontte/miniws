@@ -13,27 +13,30 @@
 
 namespace WS
 {
-using boost::asio::ip::tcp;
-	
-typedef boost::asio::buffers_iterator<boost::asio::streambuf::const_buffers_type> buffer_iterator;
-typedef boost::shared_ptr< std::vector<char> > MessagePtr;
 
-struct Frame;
+using boost::asio::ip::tcp;
+
 class Connection;
 class Session;
 class Server;
 
+typedef boost::asio::buffers_iterator<boost::asio::streambuf::const_buffers_type> buffer_iterator;
+typedef boost::shared_ptr< std::vector<char> > MessagePtr;
 typedef boost::shared_ptr<Connection> ConnectionPtr;
+typedef boost::shared_ptr<Session> SessionPtr;
+
+struct Frame;
 
 struct BaseFactory
 {
-	virtual Session* make_session() = 0;
+	virtual SessionPtr make_session() = 0;
 };
+
 template <class T>
 struct SessionFactory : public BaseFactory
 {
-	virtual T* make_session() {
-		return new T;
+	virtual SessionPtr make_session() {
+		return boost::make_shared<T>();
 	}
 };
 
@@ -44,9 +47,27 @@ private:
 	boost::weak_ptr<Connection> m_connection;
 protected:
 public:
+	
 	void send(const std::string& m);
-
+	void get_peers(std::vector<SessionPtr>& out);
 	virtual void on_message(const std::string& m) = 0;
+};
+
+template <class T>
+class SessionWrap : public Session
+{
+public:
+	void get_peers(std::vector<boost::shared_ptr<T> >& out)
+	{
+		std::vector<SessionPtr> temp;
+		Session::get_peers(temp);
+
+		out.clear();
+		for(std::vector<SessionPtr>::iterator iter = temp.begin(); iter != temp.end(); iter++)
+		{
+			out.push_back(boost::static_pointer_cast<T>(*iter));
+		}
+	}
 };
 
 class Server : public boost::noncopyable
@@ -59,24 +80,22 @@ class Server : public boost::noncopyable
 	std::set<ConnectionPtr> m_connections;
 	std::map<std::string, boost::shared_ptr<BaseFactory> > m_factories;
 	
-	void stop_listen();
 	void start_listen();
 
 	void handle_accept(ConnectionPtr new_connection,
 		const boost::system::error_code& error);
 	
-	protected:
-
 	public:
 
-	void prune(ConnectionPtr);
 	Server(boost::asio::io_service& io_service, int port);
+	void prune(ConnectionPtr);
+	void stop_listen();
 
-	void get_peers(const std::string& resource, std::set<boost::shared_ptr<Session> >& out);
+	void get_peers(const std::string& resource, std::vector<SessionPtr>& out);
 	boost::shared_ptr<BaseFactory> get_factory(const std::string& resource);
 
 	template <class T>
-	void handle_resource(const std::string res)
+	void handle_resource(const std::string& res)
 	{
 		m_factories[res] = boost::make_shared<SessionFactory<T> >();
 	}
@@ -139,17 +158,26 @@ private:
 	} m_ping;
 
 	boost::shared_ptr<Session> m_session;
-	
-protected:
-	void ping();
-	
-public:
+
 	
 	Connection(
 		boost::asio::io_service& io_service,
 		Server* );
 	
-	std::pair<buffer_iterator, bool> buffer_ready_condition(buffer_iterator begin, buffer_iterator end);
+public:
+	
+	Server& get_server() const
+	{
+		return *m_owner;
+	}
+	
+	void ping();
+	
+	std::pair<buffer_iterator, bool>
+	buffer_ready_condition(
+		buffer_iterator begin,
+		buffer_iterator end
+	);
 
 	bool have_header(const std::string& q) const;
 	std::string get_header(const std::string& q) const;
@@ -159,7 +187,7 @@ public:
 	tcp::socket& socket();	
 	void close();
 
-	boost::shared_ptr<Session> get_session() const;
+	SessionPtr get_session() const;
 
 	// encapsulated data
 	void write_text(const std::string& message);
@@ -167,12 +195,6 @@ public:
 	// raw data	
 	void write_raw(const std::string& message);
 	void write_raw(MessagePtr msg);
-	
-	Server& get_server() const
-	{
-		assert(m_owner);
-		return *m_owner;
-	}
 };
 
 };
