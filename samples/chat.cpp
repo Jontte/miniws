@@ -47,7 +47,7 @@ int main()
 	WS::Server server(service, 8080);
 	server.handle_resource<Session>("/chat");
 
-	boost::thread thread(ping_thread, boost::ref(server));
+//	boost::thread thread(ping_thread, boost::ref(server));
 
 	while(true)
 	{

@@ -3,220 +3,15 @@
 #include "base64.h"
 #include <boost/algorithm/string.hpp>
 #include <boost/bind.hpp>
-#include <ctime>
-#include <endian.h>
 
 namespace WS {
 	
-namespace
+namespace // Static linkage	
 {
 	std::ostream& log()
 	{
 		return std::cout;
 	}
-	
-	// Static linkage
-	union u64
-	{
-		uint64_t integer;
-		unsigned char data[8];
-	};
-	union u32
-	{
-		uint32_t integer;
-		unsigned char data[4];
-	};
-	union u16
-	{
-		uint16_t integer;
-		unsigned char data[2];
-	};
-
-	uint64_t ntohll(uint64_t in)
-	{
-		return be64toh(in);
-	}
-	uint64_t htonll(uint64_t in)
-	{
-		return htobe64(in);
-	}
-}
-
-struct Frame
-{
-	bool fin;
-	bool rsv1;
-	bool rsv2;
-	bool rsv3;
-	uint8_t opcode; // 4-bits
-	bool have_mask;
-	uint64_t payload_length;
-	uint8_t masking_key[4];
-	std::vector<uint8_t> payload_data;
-	
-	bool is_control_frame() { return opcode & 0x8; }
-	
-	void print();
-	
-	// Return amount of bytes consumed or 0 on failure
-	uint64_t parse(buffer_iterator begin, buffer_iterator end);
-	
-	// Write frame and return it
-	MessagePtr write();
-};
-
-
-uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
-{
-	buffer_iterator i = begin;
-	uint64_t counter = 0;
-
-	if(i == end)return 0;
-	
-	uint8_t firstbyte = *i;
-	
-	fin  = firstbyte & (1<<7);
-	rsv1 = firstbyte & (1<<6);
-	rsv2 = firstbyte & (1<<5);
-	rsv3 = firstbyte & (1<<4);
-	
-	opcode = firstbyte & 0xF;
-		
-	if(++i == end)return 0;
-	
-	uint64_t length = *i;
-	
-	have_mask = length & 128;
-	
-	length &= 127;
-		
-	if(length == 126)
-	{
-		// 16-bit length follows
-		
-		u16 len;			
-		if(++i == end)return 0;
-		len.data[0] = *i;
-		if(++i == end)return 0;
-		len.data[1] = *i;
-		
-		length = ntohs(len.integer);
-		counter = 4 + length;
-	}
-	else if(length == 127)
-	{
-		// 64-bit length follows
-		// make sure there's at least 8 bytes left
-		u64 len;
-		for(int a = 0; a < 8; a++)
-		{
-			if(++i == end)return 0;
-			len.data[a] = *i;
-		}
-		length = ntohll(len.integer);
-		
-		counter = 10 + length;
-	}
-	else
-	{
-		counter = 2 + length;
-	}
-	
-	payload_length = length;
-	
-
-	if(have_mask)
-	{
-		for(int a = 0; a < 4; a++)
-		{
-			if(++i == end)return 0;
-			masking_key[a] = *i;
-		}
-		counter += 4;
-	}
-	payload_data.resize(payload_length);
-	for(uint64_t a = 0; a < length; a++)
-	{
-		if(++i == end)return 0;
-		
-		payload_data[a] = *i;
-		
-		
-		if(have_mask)
-			payload_data[a] ^= masking_key[a % 4];
-	}
-	
-	return counter;
-}
-MessagePtr Frame::write()
-{
-	MessagePtr msg = boost::make_shared<std::vector <char> >();
-	msg->reserve(200);
-	
-	unsigned char firstbyte = 0;
-	firstbyte |= fin << 7;
-	firstbyte |= rsv1 << 6;
-	firstbyte |= rsv2 << 5;
-	firstbyte |= rsv3 << 4;
-	firstbyte |= opcode & 0xF;
-	
-	msg->push_back(firstbyte);
-	
-	// host never masks..
-	payload_length = payload_data.size();
-	if(payload_length < 126)
-	{
-		msg->push_back(uint8_t(payload_length));
-	}
-	else if(payload_length <= 0xFFFF)
-	{
-		msg->push_back(uint8_t(126));
-		u16 conv;
-		conv.integer = htons(uint16_t(payload_length));
-		msg->push_back(conv.data[0]);
-		msg->push_back(conv.data[1]);
-	}
-	else
-	{
-		msg->push_back(uint8_t(127));
-		u64 conv;
-		conv.integer = htonll(payload_length);
-		for(int i = 0; i < 8; i++)
-			msg->push_back(conv.data[i]);
-	}
-	msg->insert(msg->end(), payload_data.begin(), payload_data.end());
-	return msg;
-}
-void Frame::print()
-{
-	using std::cout;
-	using std::endl;
-	
-	cout << "== BEGIN FRAME ==" << endl;
-	cout << "fin 	| " << fin << endl;
-	cout << "rsv1	| " << rsv1 << endl;
-	cout << "rsv2	| " << rsv2 << endl;
-	cout << "rsv3	| " << rsv3 << endl;
-	cout << "opcode	| " << int(opcode) << endl;
-	cout << "masked	| " << have_mask << endl;
-	cout << "length	| " << payload_length << endl;
-	if(have_mask) {
-	cout << "mask	| " << int(masking_key[0]) << ", "
-						<< int(masking_key[1]) << ", "
-						<< int(masking_key[2]) << ", "
-						<< int(masking_key[3]) << endl;
-	}
-	
-	cout << "{ ";
-	for(uint64_t i = 0; i < payload_data.size(); i++)
-		cout << int(payload_data[i]) << " ";
-	cout << "}" << endl;
-
-	cout << "{ ";
-	for(uint64_t i = 0; i < payload_data.size(); i++)
-		cout << char(payload_data[i]);
-	cout << " }" << endl;
-	cout << "== END FRAME ==" << endl;
 }
 
 Server::Server(boost::asio::io_service& io_service, int port)
@@ -306,7 +101,7 @@ void Session::get_peers(std::vector<SessionPtr>& out)
 	}
 	catch(std::exception& e)
 	{
-	m_connection.reset();
+		m_connection.reset();
 	}
 }
 
@@ -452,9 +247,9 @@ void Connection::process(Frame& f)
 		else if(f.opcode == 0xA)
 		{
 			// pong-frame
-			if(f.payload_data.size() == 1)
+			if(f.payload_data->size() == 1)
 			{
-				uint8_t recv = f.payload_data[0];
+				uint8_t recv = (*f.payload_data)[0];
 				
 				if(recv == m_ping.data)
 				{
@@ -477,7 +272,7 @@ void Connection::process(Frame& f)
 			// continuation frame
 			std::ostream in(&fragment_);
 			
-			std::copy(f.payload_data.begin(), f.payload_data.end(), 
+			std::copy(f.payload_data->begin(), f.payload_data->end(),
 				std::ostream_iterator<uint8_t>(in));
 			
 			if(f.fin)
@@ -512,13 +307,13 @@ void Connection::process(Frame& f)
 			{
 				// first piece of fragmented data ..
 				std::ostream in(&fragment_);
-				std::copy(f.payload_data.begin(), f.payload_data.end(), 
+				std::copy(f.payload_data->begin(), f.payload_data->end(),
 					std::ostream_iterator<uint8_t>(in));
 				return;
 			}
 			else
 			{
-				std::string s(f.payload_data.begin(),f.payload_data.end());
+				std::string s(f.payload_data->begin(),f.payload_data->end());
 				try
 				{
 					if(m_session)
@@ -711,8 +506,12 @@ void Connection::ping()
 	f.rsv1 = f.rsv2 = f.rsv3 = 0;
 	f.opcode = 0x9;
 	f.have_mask = 0;
-	f.payload_data.assign(1, val);
-	write_raw(f.write());
+	f.payload_data = boost::make_shared<std::vector<char> >(1, val);
+	
+	std::vector<MessagePtr> total(2);
+	total[0] = f.write();
+	total[1] = f.payload_data;
+	write_raw(total);
 }
 void Connection::write_text(const std::string& message)
 {
@@ -722,8 +521,12 @@ void Connection::write_text(const std::string& message)
 	f.rsv1 = f.rsv2 = f.rsv3 = 0;
 	f.opcode = 0x1;
 	f.have_mask = 0;
-	f.payload_data.insert(f.payload_data.end(), message.begin(), message.end());
-	write_raw(f.write());
+	f.payload_data = boost::make_shared<std::vector<char> >(message.begin(), message.end());
+
+	std::vector<MessagePtr> total(2);
+	total[0] = f.write();
+	total[1] = f.payload_data;
+	write_raw(total);
 }
 void Connection::write_raw(const std::string& message)
 {
@@ -733,7 +536,6 @@ void Connection::write_raw(const std::string& message)
 }
 void Connection::write_raw(MessagePtr msg)
 {
-	//if(!socket_.is_open())return;
 	try
 	{
 		strand_.post(
@@ -750,13 +552,39 @@ void Connection::write_raw(MessagePtr msg)
 		close();
 	}
 }
+void Connection::write_raw(const std::vector<MessagePtr>& msg)
+{
+	try
+	{
+		strand_.post(
+			boost::bind(
+				&Connection::write_many_impl,
+				shared_from_this(),
+				msg
+			)
+		);
+	}
+	catch(std::exception& e)
+	{
+		log() << "write_raw: " << e.what() << std::endl;
+		close();
+	}
+}
 void Connection::write_impl(MessagePtr msg)
 {
-	//if(!socket_.is_open())return;
-	//	return;
 	// called from inside the strand!
 	m_outbox.push_back( msg );
 	if ( m_outbox.size() > 1 ) {
+		// outstanding async_write
+		return;
+	}
+	write_socket_impl();
+}
+void Connection::write_many_impl(std::vector<MessagePtr> msg)
+{
+	// called from inside the strand!
+	m_outbox.insert(m_outbox.end(), msg.begin(), msg.end());
+	if ( m_outbox.size() > msg.size() ) {
 		// outstanding async_write
 		return;
 	}
@@ -825,7 +653,6 @@ void Connection::close()
 				shared_from_this())
 			);
 		m_owner -> prune(shared_from_this());
-
 		m_session.reset();
 	}
 	m_active = false;

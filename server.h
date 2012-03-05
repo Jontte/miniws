@@ -11,6 +11,8 @@
 #include <string>
 #include <deque>
 
+#include "frame.h"
+
 namespace WS
 {
 
@@ -20,8 +22,6 @@ class Connection;
 class Session;
 class Server;
 
-typedef boost::asio::buffers_iterator<boost::asio::streambuf::const_buffers_type> buffer_iterator;
-typedef boost::shared_ptr< std::vector<char> > MessagePtr;
 typedef boost::shared_ptr<Connection> ConnectionPtr;
 typedef boost::shared_ptr<Session> SessionPtr;
 
@@ -142,13 +142,14 @@ private:
 	bool validate_headers();
 	void send_handshake();
 	void parse_header(const std::string& line);
-	void process(Frame& f); 
+	void process(Frame& header);
 	
 	// strand'ed, thread safe call:
 	void close_impl();
 	
 	// outbox-related function calls
 	void write_impl(MessagePtr);
+	void write_many_impl(std::vector<MessagePtr>);
 	void write_socket_impl();
 	
 	struct
@@ -158,7 +159,6 @@ private:
 	} m_ping;
 
 	boost::shared_ptr<Session> m_session;
-
 	
 	Connection(
 		boost::asio::io_service& io_service,
@@ -195,6 +195,7 @@ public:
 	// raw data	
 	void write_raw(const std::string& message);
 	void write_raw(MessagePtr msg);
+	void write_raw(const std::vector<MessagePtr>& msg);
 };
 
 };
