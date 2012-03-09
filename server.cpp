@@ -89,8 +89,8 @@ void Session::send(const std::string& m)
 	catch(std::exception& e)
 	{
 		// session might be dead..
-		m_connection.reset();
 	}
+  m_connection.reset();
 }
 void Session::get_peers(std::vector<SessionPtr>& out)
 {
@@ -101,8 +101,32 @@ void Session::get_peers(std::vector<SessionPtr>& out)
 	}
 	catch(std::exception& e)
 	{
-		m_connection.reset();
 	}
+}
+void Session::close()
+{
+	try
+	{
+		ConnectionPtr con(m_connection);
+    con->close();
+	}
+	catch(std::exception& e)
+	{
+	}
+  m_connection.reset();
+}
+std::string Session::get_header(const std::string& key) const
+{
+	try
+	{
+		ConnectionPtr con(m_connection);
+    return con->get_header(key);
+	}
+	catch(std::exception& e)
+	{
+		// session might be dead..
+	}
+  return "";
 }
 
 

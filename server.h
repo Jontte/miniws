@@ -40,35 +40,6 @@ struct SessionFactory : public BaseFactory
 	}
 };
 
-class Session
-{
-	friend class Connection;
-private:
-	boost::weak_ptr<Connection> m_connection;
-protected:
-public:
-	
-	void send(const std::string& m);
-	void get_peers(std::vector<SessionPtr>& out);
-	virtual void on_message(const std::string& m) = 0;
-};
-
-template <class T>
-class SessionWrap : public Session
-{
-public:
-	void get_peers(std::vector<boost::shared_ptr<T> >& out)
-	{
-		std::vector<SessionPtr> temp;
-		Session::get_peers(temp);
-
-		out.clear();
-		for(std::vector<SessionPtr>::iterator iter = temp.begin(); iter != temp.end(); iter++)
-		{
-			out.push_back(boost::static_pointer_cast<T>(*iter));
-		}
-	}
-};
 
 class Server : public boost::noncopyable
 {
@@ -84,7 +55,8 @@ class Server : public boost::noncopyable
 
 	void handle_accept(ConnectionPtr new_connection,
 		const boost::system::error_code& error);
-	
+
+
 	public:
 
 	Server(boost::asio::io_service& io_service, int port);
@@ -163,8 +135,15 @@ private:
 	Connection(
 		boost::asio::io_service& io_service,
 		Server* );
-	
+
 public:
+
+  template <class T>
+  void post(const T& t)
+  {
+    strand_.post(t);
+  }
+	
 	
 	Server& get_server() const
 	{
@@ -197,6 +176,50 @@ public:
 	void write_raw(MessagePtr msg);
 	void write_raw(const std::vector<MessagePtr>& msg);
 };
+
+class Session
+{
+	friend class Connection;
+private:
+	boost::weak_ptr<Connection> m_connection;
+protected:
+  template <class T>
+  void post(T t)
+  {
+   try
+   {
+    boost::shared_ptr<Connection> con(m_connection);
+    con->post(t);
+   }
+   catch(std::exception& e){}
+  }
+public:
+	
+	void send(const std::string& m);
+  void close();
+	void get_peers(std::vector<SessionPtr>& out);
+  std::string get_header(const std::string&) const;
+
+	virtual void on_message(const std::string& m) = 0;
+};
+
+template <class T>
+class SessionWrap : public Session
+{
+public:
+	void get_peers(std::vector<boost::shared_ptr<T> >& out)
+	{
+		std::vector<SessionPtr> temp;
+		Session::get_peers(temp);
+
+		out.clear();
+		for(std::vector<SessionPtr>::iterator iter = temp.begin(); iter != temp.end(); iter++)
+		{
+			out.push_back(boost::static_pointer_cast<T>(*iter));
+		}
+	}
+};
+
 
 };
 
