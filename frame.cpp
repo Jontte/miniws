@@ -1,6 +1,6 @@
 #include "frame.h"
-
 #include <boost/make_shared.hpp>
+#include <iostream>
 
 namespace
 {

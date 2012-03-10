@@ -1,3 +1,4 @@
+#include <iostream>
 #include "server.h"
 #include "sha1.h"
 #include "base64.h"
@@ -17,7 +18,11 @@ namespace // Static linkage
 Server::Server(boost::asio::io_service& io_service, int port)
 	: acceptor_(io_service, tcp::endpoint(tcp::v4(), port))
 {
-	start_listen();
+    start_listen();
+}
+Server::~Server()
+{
+    stop_listen();
 }
 void Server::stop_listen()
 {

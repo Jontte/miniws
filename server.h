@@ -60,6 +60,8 @@ class Server : public boost::noncopyable
 	public:
 
 	Server(boost::asio::io_service& io_service, int port);
+  virtual ~Server();
+
 	void prune(ConnectionPtr);
 	void stop_listen();
 
