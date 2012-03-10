@@ -81,7 +81,6 @@ boost::shared_ptr<BaseFactory> Server::get_factory(const std::string& resource)
 }
 void Session::write(const std::string& m)
 {
-  log() << "Writing " << m << std::endl;
 	try
 	{
 		ConnectionPtr con(m_connection);
@@ -89,7 +88,6 @@ void Session::write(const std::string& m)
 	}
 	catch(std::exception& e)
 	{
-    log() << "Cannot write ("<<m<<"): " << e.what() << std::endl;
 		// session might be dead..
 	}
 }
