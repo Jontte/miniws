@@ -71,6 +71,9 @@ class Server : public boost::noncopyable
 	{
 		m_factories[res] = boost::make_shared<SessionFactory<T> >();
 	}
+
+  virtual void on_connect(SessionPtr){};
+  virtual void on_disconnect(SessionPtr){};
 };
 
 
@@ -195,12 +198,14 @@ protected:
   }
 public:
 	
-	void send(const std::string& m);
+	void write(const std::string& m);
   void close();
 	void get_peers(std::vector<SessionPtr>& out);
   std::string get_header(const std::string&) const;
 
+  virtual void on_connect(){};
 	virtual void on_message(const std::string& m) = 0;
+  virtual void on_disconnect(){};
 };
 
 template <class T>

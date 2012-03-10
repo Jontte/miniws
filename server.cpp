@@ -79,8 +79,9 @@ boost::shared_ptr<BaseFactory> Server::get_factory(const std::string& resource)
 		return boost::shared_ptr<BaseFactory>();
 	return iter->second;
 }
-void Session::send(const std::string& m)
+void Session::write(const std::string& m)
 {
+  log() << "Writing " << m << std::endl;
 	try
 	{
 		ConnectionPtr con(m_connection);
@@ -88,9 +89,9 @@ void Session::send(const std::string& m)
 	}
 	catch(std::exception& e)
 	{
+    log() << "Cannot write ("<<m<<"): " << e.what() << std::endl;
 		// session might be dead..
 	}
-  m_connection.reset();
 }
 void Session::get_peers(std::vector<SessionPtr>& out)
 {
@@ -482,6 +483,9 @@ void Connection::parse_header(const std::string& line)
 		}
 		
 		m_session->m_connection = shared_from_this();
+
+    m_owner->on_connect(m_session);
+    m_session->on_connect();
 		return;
 	}
 	
@@ -672,6 +676,9 @@ void Connection::close()
 {
 	if(m_active)
 	{
+    m_session->on_disconnect();
+    m_owner->on_disconnect(m_session);
+
 		strand_.post(
 				boost::bind(&Connection::close_impl,
 				shared_from_this())

@@ -8,7 +8,7 @@ class Session : public WS::Session
 	void on_message(const string& msg)
 	{
 		cout << "Incoming message: " << msg << endl;
-		send("Foobar");
+		write("Foobar");
 	}
 };
 

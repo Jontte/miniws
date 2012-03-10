@@ -17,7 +17,7 @@ class Session : public WS::SessionWrap<Session>
 			 iter != peers.end();
 			 iter++)
 		{
-			(*iter)->send(msg);
+			(*iter)->write(msg);
 		}
 	}
 };
@@ -35,7 +35,7 @@ void ping_thread(WS::Server& server)
 
 		for(std::vector<WS::SessionPtr>::iterator iter = peers.begin();iter != peers.end(); iter++)
 		{
-			(*iter)->send("kissa");
+			(*iter)->write("kissa");
 		}
 	}
 }
