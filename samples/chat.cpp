@@ -1,5 +1,6 @@
 #include <iostream>
 #include "../server.h"
+#include "../session.h"
 #include <boost/thread.hpp>
 
 using namespace std;
@@ -9,45 +10,31 @@ class Session : public WS::SessionWrap<Session>
 	void on_message(const string& msg)
 	{
 		// Send incoming msg to all peers..
-
-		std::vector<std::shared_ptr<Session> > peers;
-		get_peers(peers);
-
-		for( std::vector<std::shared_ptr<Session> >::iterator iter = peers.begin();
-			 iter != peers.end();
-			 iter++)
-		{
-			(*iter)->write(msg);
-		}
+		for( auto p : get_peers())
+			p->write(msg);
 	}
 };
 
-void ping_thread(WS::Server& server)
+void ping_thread(std::shared_ptr<WS::Server> server)
 {
 	// Send pointless messages to all clients every ten seconds
 
 	while(true)
 	{
 		sleep(10);
-
-		std::vector<WS::SessionPtr> peers;
-		server.get_peers("/chat", peers);
-
-		for(std::vector<WS::SessionPtr>::iterator iter = peers.begin();iter != peers.end(); iter++)
-		{
-			(*iter)->write("kissa");
-		}
+		for( auto p : server->get_peers("/chat"))
+			p->write("kissa");
 	}
 }
 
 int main()
 {
 	boost::asio::io_service service;
-	
-	WS::Server server(service, 8080);
-	server.handle_resource<Session>("/chat");
 
-//	boost::thread thread(ping_thread, boost::ref(server));
+	auto server = WS::Server::create(service, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 8080));
+	server->handle_resource<Session>("/chat");
+
+//	boost::thread thread(ping_thread, server);
 
 	while(true)
 	{
@@ -60,5 +47,6 @@ int main()
 			cout << e.what() << endl;
 		}
 	}
+//	thread.join();
 }
 
