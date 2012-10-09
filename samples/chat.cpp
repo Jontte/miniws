@@ -10,10 +10,10 @@ class Session : public WS::SessionWrap<Session>
 	{
 		// Send incoming msg to all peers..
 
-		std::vector<boost::shared_ptr<Session> > peers;
+		std::vector<std::shared_ptr<Session> > peers;
 		get_peers(peers);
 
-		for( std::vector<boost::shared_ptr<Session> >::iterator iter = peers.begin();
+		for( std::vector<std::shared_ptr<Session> >::iterator iter = peers.begin();
 			 iter != peers.end();
 			 iter++)
 		{

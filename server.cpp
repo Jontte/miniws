@@ -6,8 +6,8 @@
 #include <boost/bind.hpp>
 
 namespace WS {
-	
-namespace // Static linkage	
+
+namespace // Static linkage
 {
 	std::ostream& log()
 	{
@@ -32,17 +32,17 @@ void Server::prune(ConnectionPtr con)
 {
 	// Remove given connection from connections array
 	boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
-	
+
 	std::set<ConnectionPtr >::iterator iter = m_connections.find(con);
-	
+
 	if(iter == m_connections.end())
 		return;
-	
+
 	m_connections.erase(iter);
 	log() << "Client disconnected, clients left: " << m_connections.size() << std::endl;
 }
 
-void Server::get_peers(const std::string& resource, std::vector<boost::shared_ptr<Session> >& out)
+void Server::get_peers(const std::string& resource, std::vector<std::shared_ptr<Session> >& out)
 {
 	boost::lock_guard<boost::recursive_mutex> lock(m_connections_mutex);
 	out.clear();
@@ -77,11 +77,11 @@ void Server::handle_accept(ConnectionPtr new_connection,
 	}
 	start_listen();
 }
-boost::shared_ptr<BaseFactory> Server::get_factory(const std::string& resource)
+std::shared_ptr<BaseFactory> Server::get_factory(const std::string& resource)
 {
-	std::map<std::string, boost::shared_ptr<BaseFactory> >::iterator iter = m_factories.find(resource);
+	std::map<std::string, std::shared_ptr<BaseFactory> >::iterator iter = m_factories.find(resource);
 	if(iter == m_factories.end())
-		return boost::shared_ptr<BaseFactory>();
+		return std::shared_ptr<BaseFactory>();
 	return iter->second;
 }
 void Session::write(const std::string& m)
@@ -138,7 +138,7 @@ std::pair<buffer_iterator, bool> Connection::buffer_ready_condition(buffer_itera
 {
 	// If we're still reading headers, cut from the first newline
 	if(m_parsing_headers)
-	{		
+	{
 		buffer_iterator i = begin;
 		int counter = 0;
 		while (i != end)
@@ -207,12 +207,12 @@ void Connection::handle_read(const boost::system::error_code& error, size_t byte
 			std::istream is(&buffer_);
 			std::string line;
 			std::getline(is, line);
-		
+
 			if(!line.empty() && line[line.size()-1] == '\r')
 				line.erase(line.end()-1);
-		
+
 			parse_header(line);
-		
+
 			// still parsing headers after all these bytes?
 			// somethings not right
 			if(m_bytes_received > 4*1024)
@@ -228,13 +228,13 @@ void Connection::handle_read(const boost::system::error_code& error, size_t byte
 			buffer_iterator begin = buffer_iterator::begin(buffer_.data());
 			buffer_iterator end = buffer_iterator::begin(buffer_.data());
 			end += bytes_transferred;
-			
+
 			int bytes = f.parse(begin, end);
 			buffer_.consume(bytes);
 
 			process(f);
 		}
-		
+
 		async_read();
 	}
 	else
@@ -247,15 +247,15 @@ void Connection::handle_read(const boost::system::error_code& error, size_t byte
 void Connection::process(Frame& f)
 {
 	// process recently received frame
-	
-	
+
+
 	// These bits shouldn't be set'
 	if(f.rsv1 || f.rsv2 || f.rsv3)
 	{
 		close();
 		return;
 	}
-	
+
 	if(f.is_control_frame())
 	{
 		if(f.opcode == 0x8)
@@ -278,15 +278,15 @@ void Connection::process(Frame& f)
 			if(f.payload_data->size() == 1)
 			{
 				uint8_t recv = (*f.payload_data)[0];
-				
+
 				if(recv == m_ping.data)
 				{
 					boost::posix_time::ptime now = boost::posix_time::microsec_clock::local_time();
-					
+
 					boost::posix_time::time_duration dur = boost::posix_time::time_period(m_ping.time, now).length();
-					
+
 					log() << "Ping/Pong roundtrip seconds: " << double(dur.total_microseconds())/1000000 << std::endl;
-					
+
 					m_ping.time = boost::posix_time::ptime();
 				}
 			}
@@ -299,10 +299,10 @@ void Connection::process(Frame& f)
 		{
 			// continuation frame
 			std::ostream in(&fragment_);
-			
+
 			std::copy(f.payload_data->begin(), f.payload_data->end(),
 				std::ostream_iterator<uint8_t>(in));
-			
+
 			if(f.fin)
 			{
 				// consume fragmented message
@@ -310,10 +310,10 @@ void Connection::process(Frame& f)
 					buffer_iterator::begin(fragment_.data()),
 					buffer_iterator::end(fragment_.data())
 				);
-				
+
 				// clear the buffer
 				fragment_.consume(fragment_.size());
-				
+
 				try
 				{
 					if(m_session)
@@ -330,7 +330,7 @@ void Connection::process(Frame& f)
 		else if(f.opcode == 0x1 || f.opcode == 0x2)
 		{
 			// text or binary data
-			
+
 			if(!f.fin)
 			{
 				// first piece of fragmented data ..
@@ -355,7 +355,7 @@ void Connection::process(Frame& f)
 			}
 		}
 	}
-	
+
 	log() << "UNHANDLED FRAME: " << std::endl;
 	f.print();
 }
@@ -382,19 +382,19 @@ void Connection::async_read()
 bool Connection::validate_headers()
 {
 	// return whether the received headers are good from the Websocket apis point of view
-	
+
 	if(get_resource().empty() || get_http_version().empty() || get_method().empty())
 		return false;
 	if(boost::to_lower_copy(get_header("Connection")).find("upgrade") == std::string::npos)
 		return false;
 	if(boost::to_lower_copy(get_header("Upgrade")) != "websocket")
 		return false;
-		
+
 	// mandate Sec-WebSocket-Origin or Origin
 	if(	get_header("Sec-WebSocket-Origin").empty() &&
 		get_header("Origin").empty())
 		return false;
-	
+
 	// method must be GET
 	if(get_method() != "GET")
 		return false;
@@ -406,26 +406,26 @@ bool Connection::validate_headers()
 		m_protocol_version = PROTOCOL_HYBI_08;
 	else
 		return false;
-	
+
 	// Just a reminder.
-	if(m_protocol_version == PROTOCOL_INDETERMINATE) 
+	if(m_protocol_version == PROTOCOL_INDETERMINATE)
 		return false;
 	return true;
 }
 void Connection::send_handshake()
 {
 	// create and send handshake response
-	
+
 	std::string response = get_header("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-	
+
 	unsigned char hash[20];
 	sha1::calc(response.c_str(), response.length(), hash);
 	std::string accept = base64_encode(hash, 20);
-	
+
 	std::string handshake;
 	handshake.reserve(300);
-	
-	handshake = 
+
+	handshake =
 "HTTP/1.1 101 Switching Protocols\r\n"
 "Upgrade: websocket\r\n"
 "Connection: Upgrade\r\n"
@@ -453,12 +453,12 @@ void Connection::parse_header(const std::string& line)
 		boost::trim(m_http_version);
 		return;
 	}
-	
+
 	if(line.empty())
 	{
 		// done with headers?
 		m_parsing_headers = false;
-		boost::shared_ptr<BaseFactory> fact;
+		std::shared_ptr<BaseFactory> fact;
 		// validate headers, check whether to handle resource
 		if(!validate_headers() || !(fact = get_server().get_factory(m_resource)))
 		{
@@ -484,21 +484,21 @@ void Connection::parse_header(const std::string& line)
 			close();
 			return;
 		}
-		
+
 		m_session->m_connection = shared_from_this();
 
-    m_owner->on_connect(m_session);
-    m_session->on_connect();
+		m_owner->on_connect(m_session);
+		m_session->on_connect();
 		return;
 	}
-	
+
 	// find ':'
 	size_t pos = line.find(':');
 	if(pos == std::string::npos)
 		return;
 	std::string name = line.substr(0,pos);
 	std::string value = line.substr(pos+1);
-	
+
 	// trim
 	boost::trim(name);
 	boost::trim(value);
@@ -520,25 +520,25 @@ Connection::Connection(boost::asio::io_service& io_service,
 {
 }
 
-boost::shared_ptr<Session> Connection::get_session() const
+std::shared_ptr<Session> Connection::get_session() const
 {
 	return m_session;
 }
 
 void Connection::ping()
-{	
+{
 	uint8_t val = rand() % 256;
-	
+
 	m_ping.time = boost::posix_time::microsec_clock::local_time();
 	m_ping.data = val;
-	
+
 	Frame f;
 	f.fin = 1;
 	f.rsv1 = f.rsv2 = f.rsv3 = 0;
 	f.opcode = 0x9;
 	f.have_mask = 0;
-	f.payload_data = boost::make_shared<std::vector<char> >(1, val);
-	
+	f.payload_data = std::make_shared<std::vector<char> >(1, val);
+
 	std::vector<MessagePtr> total(2);
 	total[0] = f.write();
 	total[1] = f.payload_data;
@@ -552,7 +552,7 @@ void Connection::write_text(const std::string& message)
 	f.rsv1 = f.rsv2 = f.rsv3 = 0;
 	f.opcode = 0x1;
 	f.have_mask = 0;
-	f.payload_data = boost::make_shared<std::vector<char> >(message.begin(), message.end());
+	f.payload_data = std::make_shared<std::vector<char> >(message.begin(), message.end());
 
 	std::vector<MessagePtr> total(2);
 	total[0] = f.write();
@@ -561,7 +561,7 @@ void Connection::write_text(const std::string& message)
 }
 void Connection::write_raw(const std::string& message)
 {
-	MessagePtr msg = boost::make_shared<std::vector<char> > ();
+	MessagePtr msg = std::make_shared<std::vector<char> > ();
 	msg->insert(msg->end(), message.begin(), message.end());
 	write_raw(msg);
 }
@@ -626,9 +626,9 @@ void Connection::write_socket_impl()
 	try
 	{
 		const MessagePtr& msg = m_outbox.front();
-		
+
 		boost::asio::async_write(
-			socket_, 
+			socket_,
 			boost::asio::buffer(*msg),
 			strand_.wrap(
 				boost::bind(&Connection::handle_write,
@@ -679,13 +679,13 @@ void Connection::close()
 {
 	if(m_active)
 	{
-    m_session->on_disconnect();
-    m_owner->on_disconnect(m_session);
+		m_session->on_disconnect();
+		m_owner->on_disconnect(m_session);
 
 		strand_.post(
-				boost::bind(&Connection::close_impl,
-				shared_from_this())
-			);
+			boost::bind(&Connection::close_impl,
+			shared_from_this())
+		);
 		m_owner -> prune(shared_from_this());
 		m_session.reset();
 	}
@@ -704,6 +704,6 @@ void Connection::close_impl()
 		socket_.close(e);
 	}
 }
-	
+
 }
 

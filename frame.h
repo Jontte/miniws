@@ -1,12 +1,13 @@
 #ifndef FRAME_H_INCLUDED_
 #define FRAME_H_INCLUDED_
 
+#include <memory>
 #include <boost/asio.hpp>
 
 namespace WS
 {
 typedef boost::asio::buffers_iterator<boost::asio::streambuf::const_buffers_type> buffer_iterator;
-typedef boost::shared_ptr< std::vector<char> > MessagePtr;
+typedef std::shared_ptr< std::vector<char> > MessagePtr;
 
 /*
  * This class represents the header of a frame as described in the RFC.

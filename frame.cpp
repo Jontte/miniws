@@ -1,5 +1,4 @@
 #include "frame.h"
-#include <boost/make_shared.hpp>
 #include <iostream>
 
 namespace
@@ -110,7 +109,7 @@ uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 	}
 
 	if(!payload_data)
-		payload_data = boost::make_shared<std::vector<char> >(payload_length);
+		payload_data = std::make_shared<std::vector<char> >(payload_length);
 	else
 		payload_data->resize(payload_length);
 	
@@ -125,7 +124,7 @@ uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 }
 MessagePtr Frame::write()
 {
-	MessagePtr msg = boost::make_shared<std::vector <char> >();
+	MessagePtr msg = std::make_shared<std::vector <char> >();
 	msg->reserve(10);
 	
 	unsigned char firstbyte = 0;
