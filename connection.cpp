@@ -353,6 +353,10 @@ void Connection::parse_header(const std::string& line)
 
 		send_handshake();
 
+		// Disable nagle's algorithm -> smaller latency
+		boost::asio::ip::tcp::no_delay option(true);
+		socket_.set_option(option);
+
 		// Create session!
 		m_session = fact->make_session();
 		m_session->m_connection = shared_from_this();
