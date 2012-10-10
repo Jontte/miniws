@@ -37,8 +37,7 @@ std::pair<buffer_iterator, bool> Connection::buffer_ready_condition(buffer_itera
 		if(bytes > 0)
 		{
 			// successfully parsed..
-			for(uint64_t a = 0; a < bytes; a++)
-				begin++;
+			std::advance(begin, bytes);
 			return std::make_pair(begin, true);
 		}
 		return std::make_pair(begin, false);
