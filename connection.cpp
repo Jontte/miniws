@@ -122,8 +122,6 @@ void Connection::handle_read(const boost::system::error_code& error, size_t byte
 void Connection::process(Frame& f)
 {
 	// process recently received frame
-
-
 	// These bits shouldn't be set'
 	if(f.rsv1 || f.rsv2 || f.rsv3)
 	{
