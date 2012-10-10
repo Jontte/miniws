@@ -179,7 +179,7 @@ void Connection::process(Frame& f)
 				// consume fragmented message
 				std::string s(
 					buffer_iterator::begin(fragment_.data()),
-							  buffer_iterator::end(fragment_.data())
+					buffer_iterator::end(fragment_.data())
 				);
 
 				// clear the buffer
