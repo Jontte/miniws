@@ -15,6 +15,7 @@ void Session::write(const std::string& m)
 }
 std::vector<SessionPtr> Session::get_peers()
 {
+	// Returns list of peers
 	std::vector<SessionPtr> out;
 	try
 	{
