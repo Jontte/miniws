@@ -102,11 +102,12 @@ void Connection::handle_read(const boost::system::error_code& error, size_t byte
 			end += bytes_transferred;
 
 			int bytes = f.parse(begin, end);
-			buffer_.consume(bytes);
-
-			process(f);
+			if(bytes > 0) // should always happen since the frame was already parsed in buffer_ready_condition
+			{
+				buffer_.consume(bytes);
+				process(f);
+			}
 		}
-
 		async_read();
 	}
 	else
