@@ -82,9 +82,7 @@ void Connection::handle_read(const boost::system::error_code& error, size_t byte
 			std::string line;
 			std::getline(is, line);
 
-			if(!line.empty() && line[line.size()-1] == '\r')
-				line.erase(line.end()-1);
-
+			boost::trim(line);
 			parse_header(line);
 
 			// still parsing headers after all these bytes?
