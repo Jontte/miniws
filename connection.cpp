@@ -4,6 +4,7 @@
 #include "sha1.h"
 #include "base64.h"
 
+#include <iostream>
 #include <boost/algorithm/string.hpp>
 
 namespace WS {
