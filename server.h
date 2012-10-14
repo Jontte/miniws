@@ -79,6 +79,17 @@ class Server
 	{
 		m_factories[res] = std::make_shared<SessionFactory<T> >();
 	}
+
+	template <class T>
+	std::vector<std::shared_ptr<T> > get_peers(const std::string& res)
+	{
+		auto peers = get_peers(res);
+		std::vector<std::shared_ptr<T> > ret;
+		ret.reserve(peers.size());
+		for(auto& peer : peers)
+			ret.push_back(std::static_pointer_cast<T>(peer));
+		return ret;
+	}
 };
 
 };
