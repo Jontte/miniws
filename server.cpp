@@ -29,7 +29,7 @@ std::vector<std::shared_ptr<Session> > Server::get_peers(const std::string& reso
 		WeakConnectionPtr weak= *iter;
 		try
 		{
-			auto con = weak.lock();
+			std::shared_ptr<Connection> con(weak);
 			if(con->get_resource() == resource && con->get_session())
 				out.push_back(con->get_session());
 		}
