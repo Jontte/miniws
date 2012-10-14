@@ -71,11 +71,4 @@ std::shared_ptr<BaseFactory> Server::get_factory(const std::string& resource)
 	return iter->second;
 }
 
-std::shared_ptr< Server > Server::create ( boost::asio::io_service& io_service, tcp::endpoint endpoint )
-{
-	std::shared_ptr<Server> ptr(new Server(io_service, endpoint));
-	ptr->start_listen(); // cannot be called in ctor since shared_from_this won't work there
-	return ptr;
-}
-
 }

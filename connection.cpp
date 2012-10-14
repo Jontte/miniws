@@ -357,6 +357,7 @@ void Connection::parse_header(const std::string& line)
 		// Create session!
 		m_session = fact->make_session();
 		m_session->m_connection = shared_from_this();
+		m_server.lock()->on_connect(m_resource, m_session);
 		m_session->on_connect();
 		return;
 	}
@@ -548,7 +549,10 @@ void Connection::close()
 	if(m_active)
 	{
 		if(m_session)
+		{
+			m_server.lock()->on_disconnect(m_resource, m_session);
 			m_session->on_disconnect();
+		}
 
 		strand_.post(
 			std::bind(&Connection::close_impl, shared_from_this())

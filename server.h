@@ -59,18 +59,25 @@ class Server
 	void handle_accept(ConnectionPtr new_connection,
 		const boost::system::error_code& error);
 
-	void prune(ConnectionPtr);
-
-	// Keep ctor private, use factory instead
+	protected:
 	Server( boost::asio::io_service& io_service, boost::asio::ip::tcp::endpoint endpoint );
 
 	public:
 
-	~Server();
+	virtual void on_connect(const std::string& resource, std::shared_ptr<Session> session) {}
+	virtual void on_disconnect(const std::string& resource, std::shared_ptr<Session> session) {}
+
+	virtual ~Server();
 
 	std::shared_ptr<BaseFactory> get_factory(const std::string& resource);
 
-	static std::shared_ptr<Server> create(boost::asio::io_service& io_service, boost::asio::ip::tcp::endpoint endpoint);
+	template<class T = Server>
+	static std::shared_ptr<T> create(boost::asio::io_service& io_service, boost::asio::ip::tcp::endpoint endpoint)
+	{
+		std::shared_ptr<T> ptr(new T(io_service, endpoint));
+		ptr->start_listen(); // cannot be called in ctor since shared_from_this won't work there
+		return ptr;
+	}
 
 	std::vector< std::shared_ptr< Session > > get_peers( const std::string& resource );
 

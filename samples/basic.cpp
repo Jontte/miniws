@@ -17,7 +17,7 @@ int main()
 {
 	boost::asio::io_service service;
 
-	auto server = WS::Server::create(service, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 8080));
+	auto server = WS::Server::create<>(service, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), 8080));
 	server->handle_resource<Session>("/basic");
 
 	while(true)
