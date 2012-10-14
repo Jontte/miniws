@@ -37,36 +37,36 @@ uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 {
 	buffer_iterator i = begin;
 	uint64_t counter = 0;
-	
+
 	if(i == end)return 0;
-	
+
 	uint8_t firstbyte = *i;
-	
+
 	fin  = firstbyte & (1<<7);
 	rsv1 = firstbyte & (1<<6);
 	rsv2 = firstbyte & (1<<5);
 	rsv3 = firstbyte & (1<<4);
-	
+
 	opcode = firstbyte & 0xF;
-	
+
 	if(++i == end)return 0;
-	
+
 	uint64_t length = *i;
-	
+
 	have_mask = length & 128;
-	
+
 	length &= 127;
-	
+
 	if(length == 126)
 	{
 		// 16-bit length follows
-		
+
 		u16 len;
 		if(++i == end)return 0;
 		len.data[0] = *i;
 		if(++i == end)return 0;
 		len.data[1] = *i;
-		
+
 		length = ntohs(len.integer);
 		counter = 4 + length;
 	}
@@ -81,17 +81,17 @@ uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 			len.data[a] = *i;
 		}
 		length = ntohll(len.integer);
-		
+
 		counter = 10 + length;
 	}
 	else
 	{
 		counter = 2 + length;
 	}
-	
+
 	payload_length = length;
-	
-	
+
+
 	if(have_mask)
 	{
 		for(int a = 0; a < 4; a++)
@@ -112,30 +112,30 @@ uint64_t Frame::parse(buffer_iterator begin, buffer_iterator end)
 		payload_data = std::make_shared<std::vector<char> >(payload_length);
 	else
 		payload_data->resize(payload_length);
-	
+
 	for(uint64_t a = 0; a < length; a++)
 	{
 		(*payload_data)[a] = *++i;
 		if(have_mask)
 			(*payload_data)[a] ^= masking_key[a % 4];
 	}
-	
+
 	return counter;
 }
 MessagePtr Frame::write()
 {
 	MessagePtr msg = std::make_shared<std::vector <char> >();
 	msg->reserve(10);
-	
+
 	unsigned char firstbyte = 0;
 	firstbyte |= fin << 7;
 	firstbyte |= rsv1 << 6;
 	firstbyte |= rsv2 << 5;
 	firstbyte |= rsv3 << 4;
 	firstbyte |= opcode & 0xF;
-	
+
 	msg->push_back(firstbyte);
-	
+
 	// host never masks..
 	payload_length = payload_data->size();
 	if(payload_length < 126)
@@ -164,7 +164,7 @@ void Frame::print()
 {
 	using std::cout;
 	using std::endl;
-	
+
 	cout << "== BEGIN FRAME ==" << endl;
 	cout << "fin 	| " << fin << endl;
 	cout << "rsv1	| " << rsv1 << endl;
