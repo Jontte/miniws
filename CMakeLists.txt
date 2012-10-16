@@ -8,4 +8,4 @@ add_library(miniws server.cpp connection.cpp session.cpp frame.cpp sha1.cpp base
 find_package(Boost COMPONENTS system thread REQUIRED)
 target_link_libraries(miniws ${Boost_SYSTEM_LIBRARY})
 
-add_subdirectory(samples)
+add_subdirectory(samples EXCLUDE_FROM_ALL)
